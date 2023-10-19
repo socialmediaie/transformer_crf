@@ -1,7 +1,8 @@
-import evaluate
-import numpy as np
 import torch
 from transformers import DataCollatorForTokenClassification
+
+import numpy as np
+import evaluate
 
 seqeval = evaluate.load("seqeval")
 
@@ -133,7 +134,8 @@ class NERDataCollator(DataCollatorForTokenClassification):
 
 def get_crf_predictions(predictions, labels, label_list):
     # predictions = np.argmax(predictions, axis=2)
-    predictions = predictions[3]  # 3rd element in crf_prediction is the best_path
+    # predictions = predictions[3]  # 3rd element in crf_prediction is the best_path
+    # Do not select 3rd element if not using CRF
 
     true_predictions, true_labels = [], []
     for prediction, label in zip(predictions, labels):
@@ -153,6 +155,13 @@ class GetCRFMetrics(object):
 
     def __call__(self, p):
         predictions, labels = p
+        if isinstance(predictions, tuple):
+            predictions = predictions[
+                3
+            ]  # 3rd element in crf_prediction is the best_path
+        # elif isinstance(predictions, torch.LongTensor):
+        #  predictions = predictions
+
         true_predictions, true_labels = get_crf_predictions(
             predictions, labels, self.label_list
         )

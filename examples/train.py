@@ -6,7 +6,7 @@ from transformers import AutoTokenizer, AutoModelForTokenClassification
 from transformers.modeling_outputs import TokenClassifierOutput
 from transformers.modeling_utils import PreTrainedModel
 
-from transformer_crf.crf_model import PretrainedCRFModel
+from transformer_crf.crf_model import PretrainedCRFModel, PretrainedTaggerModel
 from transformer_crf.utils import create_batch, NERDataCollator, GetCRFMetrics
 
 from datasets import load_dataset
@@ -39,15 +39,22 @@ num_labels = len(dataset["train"].features[label_col].feature.names)
 id2label = {i: l for i, l in enumerate(label_list)}
 label2id = {l: i for i, l in enumerate(label_list)}
 
-model = PretrainedCRFModel.from_pretrained(
-    model_type, num_labels=num_labels, id2label=id2label, label2id=label2id
-)
+use_crf = False
+
+if use_crf:
+    model = PretrainedCRFModel.from_pretrained(
+        model_type, num_labels=num_labels, id2label=id2label, label2id=label2id
+    )
+else:
+    model = PretrainedTaggerModel.from_pretrained(
+        model_type, num_labels=num_labels, id2label=id2label, label2id=label2id
+    )
 
 compute_metrics = GetCRFMetrics(label_list)
 
 
-output_dir = f"{dataset_path.split('/')[1]}-crf-tagger-{model_type.split('/')[1]}"
-
+infix = "crf-tagger" if use_crf else "tagger"
+output_dir = f"{dataset_path.split('/')[1]}-{infix}-{model_type.split('/')[1]}"
 
 training_args = TrainingArguments(
     output_dir=output_dir,
@@ -58,13 +65,16 @@ training_args = TrainingArguments(
     # evaluation_strategy="epoch",
     evaluation_strategy="steps",
     eval_steps=1000,
-    save_strategy="epoch",
+    # save_strategy="epoch",
+    save_strategy="steps",
+    save_steps=1000,
     save_total_limit=1,
     dataloader_num_workers=10,
     remove_unused_columns=False,
-    num_train_epochs=3,
+    num_train_epochs=10,
     push_to_hub=False,
-    hub_model_id=output_dir
+    hub_model_id=output_dir,
+    load_best_model_at_end=True,
     # label_smoothing_factor=0.1
 )
 

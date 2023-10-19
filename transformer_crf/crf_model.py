@@ -1,15 +1,15 @@
+import torch
+from torch import nn
 from dataclasses import dataclass
 from typing import Optional, Tuple
 
-import datasets
-import torch
 from datasets import load_dataset
-from torch import nn
-from transformers import AutoConfig, AutoModelForTokenClassification, AutoTokenizer
+import datasets
+from transformers import AutoConfig, AutoTokenizer, AutoModelForTokenClassification
 from transformers.modeling_outputs import TokenClassifierOutput
 from transformers.modeling_utils import PreTrainedModel
 
-from .crf import CRF, AdvancedCRF, MaskedCRFLoss
+from .crf import MaskedCRFLoss, CRF, AdvancedCRF
 from .utils import subword_to_word_embeddings
 
 
@@ -17,8 +17,8 @@ from .utils import subword_to_word_embeddings
 class TokenClassifierCRFOutput(TokenClassifierOutput):
     loss: Optional[torch.FloatTensor] = None
     real_path_score: Optional[torch.FloatTensor] = None
-    total_score: torch.FloatTensor = None
-    best_path_score: torch.FloatTensor = None
+    total_score: Optional[torch.FloatTensor] = None
+    best_path_score: Optional[torch.FloatTensor] = None
     best_path: Optional[torch.LongTensor] = None
     hidden_states: Optional[Tuple[torch.FloatTensor]] = None
     attentions: Optional[Tuple[torch.FloatTensor]] = None
@@ -86,6 +86,64 @@ class PretrainedCRFModel(PreTrainedModel):
             real_path_score=crf_output.real_path_score,
             total_score=crf_output.total_score,
             best_path_score=crf_output.best_path_score,
+            best_path=best_path,
+            hidden_states=encoder_output.hidden_states,
+            attentions=encoder_output.attentions,
+        )
+        return output
+
+
+class PretrainedTaggerModel(PreTrainedModel):
+    config_class = AutoConfig
+
+    def __init__(self, config):
+        super().__init__(config)
+        self.encoder = AutoModelForTokenClassification.from_pretrained(
+            config._name_or_path, config=config
+        )
+        self.num_labels = config.num_labels
+        self.loss_fct = torch.nn.CrossEntropyLoss()
+        self.post_init()
+
+    def forward(
+        self,
+        input_ids=None,
+        token_type_ids=None,
+        attention_mask=None,
+        labels=None,
+        return_best_path=False,
+        valid_subword_mask=None,
+        **kwargs
+    ):
+        encoder_output = self.encoder(
+            input_ids=input_ids,
+            token_type_ids=token_type_ids,
+            attention_mask=attention_mask,
+            **kwargs
+        )
+
+        emissions = encoder_output.logits
+
+        if valid_subword_mask is not None:
+            mask = valid_subword_mask == 1
+            # emissions = subword_to_word_embeddings(encoder_output.logits, mask, reduce_str="mean")
+            emissions, _ = subword_to_word_embeddings(
+                emissions, mask, subword_tags=None, reduce_str="mean"
+            )
+
+        best_path = emissions.argmax(-1)
+
+        loss = None
+        if labels is not None:
+            loss = self.loss_fct(emissions.view(-1, self.num_labels), labels.view(-1))
+            mask = labels != -100
+            best_path = best_path.where(mask, -100)
+
+        output = TokenClassifierCRFOutput(
+            loss=loss,
+            real_path_score=None,
+            total_score=None,
+            best_path_score=None,
             best_path=best_path,
             hidden_states=encoder_output.hidden_states,
             attentions=encoder_output.attentions,
